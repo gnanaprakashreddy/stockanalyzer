@@ -65,16 +65,15 @@ def _cache_clock() -> dict:
 
 
 def refresh_caches(force: bool = False):
-    """data.py uses in-process lru caches; expire them hourly so prices/fundamentals stay fresh."""
+    """Expire per-stock data hourly (or on demand). The once-a-day sector benchmarks and idea screen are kept:
+    rebuilding them fires ~100 Yahoo requests at once, which is what triggers Yahoo's rate limiting."""
     clk = _cache_clock()
     if force or time.time() - clk["t"] > 3600:
         for fn in (data.info, data.statement, data._ticker, data.fx_rate):
             fn.cache_clear()
-        st.cache_data.clear()
+        for fn in (price_history, _analyse, statements, _info, piotroski, fx, search):
+            fn.clear()
         clk["t"] = time.time()
-
-
-refresh_caches()
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -116,7 +115,10 @@ def _analyse(symbol: str, version: int) -> dict:
     key = (data.market_of(symbol), inf.get("sector"))
     if key not in med:
         med.update(screener.sector_medians(screener.fetch_infos([symbol])))
-    return stock.analyse(symbol, CFG, med, px[symbol], px[bench])
+    a = stock.analyse(symbol, CFG, med, px[symbol], px[bench])
+    if a:
+        a["partial"] = bool(inf.get("_partial"))
+    return a
 
 
 def analyse(symbol: str) -> dict:
@@ -124,6 +126,12 @@ def analyse(symbol: str) -> dict:
     if a and a.get("dcf") and "growth_cap" not in a["dcf"]:  # stale entry from older code
         _analyse.clear()
         a = _analyse(symbol, MODEL_VERSION)
+    if a and a.get("partial"):  # Yahoo throttled the profile: don't keep this result, retry on next view
+        _analyse.clear(symbol, MODEL_VERSION)
+        a = {**a, "fair": float("nan"), "upside": float("nan"), "rating": "Data unavailable",
+             "why": "company profile temporarily unavailable from Yahoo"}
+        st.warning("Yahoo Finance is temporarily rate-limiting this server, so company profile data "
+                   "(sector, P/E, analyst targets...) is missing for now. Wait a minute or two and search again.", icon="⏳")
     return a
 
 
@@ -133,8 +141,15 @@ def statements(symbol: str, quarterly: bool) -> dict:
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def info(symbol: str) -> dict:
+def _info(symbol: str) -> dict:
     return data.info(symbol)
+
+
+def info(symbol: str) -> dict:
+    d = _info(symbol)
+    if d.get("_partial"):
+        _info.clear(symbol)
+    return d
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -628,6 +643,9 @@ def learn_page():
                     with st.expander(sec["title"].replace("$", "\\$"), expanded=(i == 0)):
                         _render_blocks(sec["blocks"])
         st.caption("Figures from Yahoo Finance; statement amounts in the company's reporting currency. Educational use only.")
+
+
+refresh_caches()
 
 
 # ------------------------------------------------------------------ navigation

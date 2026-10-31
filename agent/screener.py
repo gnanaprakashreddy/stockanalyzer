@@ -11,13 +11,13 @@ FIELDS = ["shortName", "sector", "currency", "marketCap", "revenueGrowth", "earn
           "enterpriseToEbitda", "targetMeanPrice", "recommendationKey", "currentPrice", "regularMarketPrice"]
 
 
-def fetch_infos(symbols, workers: int = 8) -> pd.DataFrame:
+def fetch_infos(symbols, workers: int = 4) -> pd.DataFrame:
     symbols = list(dict.fromkeys(symbols))
     with ThreadPoolExecutor(workers) as ex:
         infos = list(ex.map(data.info, symbols))
     rows = []
     for s, inf in zip(symbols, infos):
-        if not inf:
+        if not inf or inf.get("_partial"):
             continue
         r = {k: inf.get(k) for k in FIELDS}
         r["symbol"], r["market"] = s, data.market_of(s)

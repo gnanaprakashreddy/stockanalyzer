@@ -1,4 +1,6 @@
 """Market data access layer (Yahoo Finance via yfinance) with simple caching."""
+import threading
+import time
 import warnings
 from functools import lru_cache
 
@@ -18,12 +20,49 @@ def _ticker(symbol: str) -> yf.Ticker:
     return yf.Ticker(symbol)
 
 
-@lru_cache(maxsize=None)
-def info(symbol: str) -> dict:
+_INFO: dict = {}
+_INFO_LOCK = threading.Lock()
+PARTIAL_TTL = 300  # seconds a throttled/partial result is reused before retrying Yahoo
+
+
+def _info_ok(d) -> bool:
+    return isinstance(d, dict) and len(d) > 10 and bool(d.get("longName") or d.get("shortName") or d.get("quoteType"))
+
+
+def _fast_info(symbol: str) -> dict:
+    """Minimal fallback from the (rarely throttled) price endpoint when the full profile is unavailable."""
     try:
-        return _ticker(symbol).info or {}
+        fi = _ticker(symbol).fast_info
+        out = {"currency": fi.get("currency"), "marketCap": fi.get("marketCap"), "currentPrice": fi.get("lastPrice"),
+               "sharesOutstanding": fi.get("shares"), "_partial": True}
+        return {k: v for k, v in out.items() if v is not None}
     except Exception:
-        return {}
+        return {"_partial": True}
+
+
+def info(symbol: str) -> dict:
+    """Full Yahoo profile. Retries with backoff; failures are never cached, so a temporary Yahoo
+    rate-limit doesn't leave a stock blank until the next refresh. Partial results carry `_partial`."""
+    hit = _INFO.get(symbol)
+    if hit and (not hit[1].get("_partial") or time.time() - hit[0] < PARTIAL_TTL):
+        return hit[1]
+    d = None
+    for wait in (0, 1.5, 4):
+        time.sleep(wait)
+        try:
+            d = _ticker(symbol).get_info()
+        except Exception:
+            d = None
+        if _info_ok(d):
+            break
+    if not _info_ok(d):
+        d = _fast_info(symbol)
+    with _INFO_LOCK:
+        _INFO[symbol] = (time.time(), d)
+    return d
+
+
+info.cache_clear = _INFO.clear
 
 
 @lru_cache(maxsize=None)
