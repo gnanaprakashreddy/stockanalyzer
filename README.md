@@ -79,3 +79,8 @@ Each holding gets a rating (Strong Buy / Buy-Accumulate / Hold / Reduce / Sell) 
 
 ## Disclaimer
 Educational tool only, not investment advice. Yahoo Finance data can be delayed or wrong, and model outputs depend on the assumptions in `config.json`.
+
+## Architecture
+
+Class, sequence and flow diagrams plus a debugging guide (which file to check for each symptom): [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
