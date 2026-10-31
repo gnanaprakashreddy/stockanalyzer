@@ -38,7 +38,16 @@ Holdings source, in priority order: edits or uploads made in the browser (curren
 Notes:
 - Free apps sleep after a few days without visits; the first visit wakes them in about a minute.
 - To update holdings, edit the `portfolio_csv` secret, or use the in-app editor and download the CSV.
-- Data is cached for 1 hour; use **🔄 Refresh market data** to force fresh data.
+- Prices refresh every 15 minutes; fundamentals are kept for a day. **🔄 Refresh market data** forces fresh prices.
+
+### Data sources and rate limits
+Yahoo Finance often throttles shared cloud servers like Streamlit Cloud. The app works around this, for free:
+1. **Daily snapshot.** `.github/workflows/snapshot.yml` runs at 06:00 IST (Mon-Sat). It saves profiles and statements for the screener universe to the repo's `snapshot` branch, and the app reads that file instead of calling Yahoo. To run it right away: GitHub -> **Actions** -> *Daily data snapshot* -> **Run workflow**.
+   - Optional repo secret `SNAPSHOT_EXTRA` (Settings -> Secrets and variables -> Actions): comma-separated extra tickers to include, e.g. `IRCTC.NS,ROKU`. The repo is public, so these tickers' public market data becomes visible in the `snapshot` branch. Quantities never leave your secrets.
+2. **Live Yahoo**, with retries and backoff, for stocks that aren't in the snapshot. Failures are never cached.
+3. **SEC EDGAR** (official US filings) when Yahoo refuses a US stock. It provides the latest fiscal-year statements; analyst targets are unavailable. There is no free official equivalent for Indian stocks, so those show a "try again shortly" notice.
+
+SEC asks API users to identify themselves. Optionally, add `SEC_USER_AGENT = "Your Name you@mail.com"` to the Streamlit secrets and to the repo's Actions secrets.
 
 ## Daily report (local)
 1. Run it: `.\.venv\Scripts\python.exe run_agent.py --open`

@@ -12,14 +12,14 @@ import pandas as pd
 import streamlit as st
 import yfinance as yf
 
-from agent import data, explain, financials, lessons, risk, screener, stock, valuation
+from agent import data, explain, financials, lessons, risk, screener, sec, stock, valuation
 
 
 def _reload_changed_modules():
     """Streamlit Cloud re-runs app.py after a git push but can keep old agent/* modules in memory.
     Reload any whose source file changed since it was loaded, so new code is always used."""
     import importlib
-    for m in (data, risk, valuation, financials, screener, stock, explain, lessons):
+    for m in (sec, data, risk, valuation, financials, screener, stock, explain, lessons):
         mtime = os.path.getmtime(m.__file__)
         if getattr(m, "_src_mtime", None) != mtime:
             importlib.reload(m)
@@ -65,13 +65,13 @@ def _cache_clock() -> dict:
 
 
 def refresh_caches(force: bool = False):
-    """Expire per-stock data hourly (or on demand). The once-a-day sector benchmarks and idea screen are kept:
-    rebuilding them fires ~100 Yahoo requests at once, which is what triggers Yahoo's rate limiting."""
+    """Prices/analyses refresh every 15 min (or on demand). Fundamentals are kept for a day inside agent/data.py
+    (they change quarterly) - re-downloading them is what triggers Yahoo's rate limiting on shared cloud servers."""
     clk = _cache_clock()
-    if force or time.time() - clk["t"] > 3600:
-        for fn in (data.info, data.statement, data._ticker, data.fx_rate):
+    if force or time.time() - clk["t"] > 900:
+        for fn in (data._ticker, data.fx_rate):
             fn.cache_clear()
-        for fn in (price_history, _analyse, statements, _info, piotroski, fx, search):
+        for fn in (price_history, _analyse, fx, search):
             fn.clear()
         clk["t"] = time.time()
 
@@ -96,7 +96,7 @@ def sector_medians() -> dict:
     return screener.sector_medians(screener.fetch_infos(universe))
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=900, show_spinner=False)
 def price_history(symbols: tuple, period: str = "5y") -> pd.DataFrame:
     return data.prices(list(symbols), period=period)
 
@@ -104,7 +104,7 @@ def price_history(symbols: tuple, period: str = "5y") -> pd.DataFrame:
 MODEL_VERSION = 2  # bump whenever agent/ models change shape, so cached results are recomputed
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=900, show_spinner=False)
 def _analyse(symbol: str, version: int) -> dict:
     bench = CFG["markets"][data.market_of(symbol)]["benchmark"]
     px = price_history((symbol, bench), "2y")
@@ -118,6 +118,7 @@ def _analyse(symbol: str, version: int) -> dict:
     a = stock.analyse(symbol, CFG, med, px[symbol], px[bench])
     if a:
         a["partial"] = bool(inf.get("_partial"))
+        a["source"] = inf.get("_source")
     return a
 
 
@@ -132,27 +133,31 @@ def analyse(symbol: str) -> dict:
              "why": "company profile temporarily unavailable from Yahoo"}
         st.warning("Yahoo Finance is temporarily rate-limiting this server, so company profile data "
                    "(sector, P/E, analyst targets...) is missing for now. Wait a minute or two and search again.", icon="⏳")
+    elif a and a.get("source") == "SEC EDGAR":
+        _analyse.clear(symbol, MODEL_VERSION)
+        st.info("Yahoo Finance is busy, so fundamentals come from this company's official SEC filings (latest fiscal "
+                "year). Analyst targets are unavailable until Yahoo responds again.", icon="🏛️")
     return a
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=86400, show_spinner=False)
 def statements(symbol: str, quarterly: bool) -> dict:
     return financials.statements(symbol, quarterly)
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=86400, show_spinner=False)
 def _info(symbol: str) -> dict:
     return data.info(symbol)
 
 
 def info(symbol: str) -> dict:
     d = _info(symbol)
-    if d.get("_partial"):
+    if d.get("_partial") or d.get("_source"):
         _info.clear(symbol)
     return d
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=86400, show_spinner=False)
 def piotroski(symbol: str) -> list:
     return valuation.piotroski_detail(symbol)
 
@@ -657,5 +662,6 @@ with st.sidebar:
     if st.button("🔄 Refresh market data"):
         refresh_caches(force=True)
         st.rerun()
-    st.caption("Data: Yahoo Finance (may be delayed). Educational use only - not investment advice.")
+    st.caption("Data: Yahoo Finance (may be delayed), daily snapshot and SEC EDGAR filings as fallbacks. "
+               "Educational use only - not investment advice.")
 PAGES[page]()

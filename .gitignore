@@ -8,3 +8,6 @@ portfolio.csv
 reports/
 data/
 .streamlit/secrets.toml
+
+# daily data snapshot (published to the 'snapshot' branch by GitHub Actions)
+snapshot_out/
