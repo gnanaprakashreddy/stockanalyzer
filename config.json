@@ -1,0 +1,130 @@
+{
+  "base_currency": "INR",
+  "portfolio_file": "portfolio.csv",
+  "reports_dir": "reports",
+  "history_dir": "data/history",
+  "markets": {
+    "IN": {
+      "benchmark": "^NSEI",
+      "risk_free_rate": 0.068,
+      "equity_risk_premium": 0.07,
+      "terminal_growth": 0.05,
+      "tax_rate": 0.25
+    },
+    "US": {
+      "benchmark": "^GSPC",
+      "risk_free_rate": 0.043,
+      "equity_risk_premium": 0.05,
+      "terminal_growth": 0.025,
+      "tax_rate": 0.21
+    }
+  },
+  "dcf": {
+    "projection_years": 10,
+    "high_growth_years": 5,
+    "max_initial_growth": 0.25,
+    "min_initial_growth": 0.0
+  },
+  "valuation_weights": {
+    "dcf": 0.4,
+    "relative": 0.25,
+    "analyst_target": 0.15,
+    "ddm": 0.1,
+    "graham": 0.1
+  },
+  "optimization": {
+    "max_weight": 0.3,
+    "simulations": 20000
+  },
+  "screener": {
+    "enabled": true,
+    "top_n_per_market": 5,
+    "weights": {
+      "growth": 0.35,
+      "quality": 0.25,
+      "valuation": 0.2,
+      "momentum": 0.2
+    },
+    "universe": {
+      "IN": [
+        "RELIANCE.NS",
+        "TCS.NS",
+        "HDFCBANK.NS",
+        "ICICIBANK.NS",
+        "INFY.NS",
+        "BHARTIARTL.NS",
+        "ITC.NS",
+        "LT.NS",
+        "SBIN.NS",
+        "BAJFINANCE.NS",
+        "HCLTECH.NS",
+        "KOTAKBANK.NS",
+        "AXISBANK.NS",
+        "ASIANPAINT.NS",
+        "MARUTI.NS",
+        "SUNPHARMA.NS",
+        "TITAN.NS",
+        "ULTRACEMCO.NS",
+        "NTPC.NS",
+        "POWERGRID.NS",
+        "TRENT.NS",
+        "DIXON.NS",
+        "PERSISTENT.NS",
+        "POLYCAB.NS",
+        "ETERNAL.NS",
+        "HAL.NS",
+        "BEL.NS",
+        "DMART.NS",
+        "PIDILITIND.NS",
+        "CHOLAFIN.NS",
+        "DIVISLAB.NS",
+        "APOLLOHOSP.NS",
+        "BAJAJ-AUTO.NS",
+        "TVSMOTOR.NS",
+        "COFORGE.NS",
+        "KPITTECH.NS",
+        "MAXHEALTH.NS",
+        "ABB.NS",
+        "CGPOWER.NS",
+        "BSE.NS"
+      ],
+      "US": [
+        "AAPL",
+        "MSFT",
+        "NVDA",
+        "GOOGL",
+        "AMZN",
+        "META",
+        "AVGO",
+        "TSLA",
+        "LLY",
+        "V",
+        "MA",
+        "COST",
+        "NFLX",
+        "AMD",
+        "ADBE",
+        "CRM",
+        "ORCL",
+        "NOW",
+        "UBER",
+        "PLTR",
+        "CRWD",
+        "PANW",
+        "ANET",
+        "ISRG",
+        "INTU",
+        "SHOP",
+        "SNOW",
+        "MELI",
+        "ASML",
+        "TSM",
+        "AXON",
+        "DDOG",
+        "ZS",
+        "NET",
+        "APP"
+      ]
+    }
+  }
+}
