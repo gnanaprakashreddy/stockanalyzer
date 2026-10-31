@@ -2,6 +2,7 @@
 import hmac
 import io
 import json
+import os
 import tempfile
 import time
 from pathlib import Path
@@ -12,6 +13,20 @@ import streamlit as st
 import yfinance as yf
 
 from agent import data, explain, financials, lessons, risk, screener, stock, valuation
+
+
+def _reload_changed_modules():
+    """Streamlit Cloud re-runs app.py after a git push but can keep old agent/* modules in memory.
+    Reload any whose source file changed since it was loaded, so new code is always used."""
+    import importlib
+    for m in (data, risk, valuation, financials, screener, stock, explain, lessons):
+        mtime = os.path.getmtime(m.__file__)
+        if getattr(m, "_src_mtime", None) != mtime:
+            importlib.reload(m)
+            m._src_mtime = mtime
+
+
+_reload_changed_modules()
 
 ROOT = Path(__file__).parent
 CFG = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
