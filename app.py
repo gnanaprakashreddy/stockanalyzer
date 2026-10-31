@@ -91,9 +91,17 @@ def search(q: str) -> list:
 
 
 @st.cache_data(ttl=86400, show_spinner="Building sector benchmarks (once a day) ...")
-def sector_medians() -> dict:
+def _sector_medians() -> tuple:
     universe = [s for m in CFG["screener"]["universe"].values() for s in m]
-    return screener.sector_medians(screener.fetch_infos(universe))
+    df = screener.fetch_infos(universe)
+    return screener.sector_medians(df), len(df) / max(len(universe), 1)
+
+
+def sector_medians() -> dict:
+    med, coverage = _sector_medians()
+    if coverage < 0.6:  # built while Yahoo was blocking: don't keep a thin benchmark for a whole day
+        _sector_medians.clear()
+    return med
 
 
 @st.cache_data(ttl=900, show_spinner=False)
@@ -581,13 +589,24 @@ def portfolio_page():
 
 # ------------------------------------------------------------------ ideas page
 @st.cache_data(ttl=86400, show_spinner="Screening the universe (once a day) ...")
-def ideas() -> pd.DataFrame:
+def _ideas() -> pd.DataFrame:
     universe = [s for m in CFG["screener"]["universe"].values() for s in m]
     df = screener.fetch_infos(universe)
+    if len(df) < 0.6 * len(universe):
+        raise RuntimeError("thin")  # exceptions are not cached by st.cache_data
     px = data.prices(list(df.index), period="1y")
     scored = screener.score(df, px[[c for c in df.index if c in px.columns]].iloc[-252:], CFG["screener"]["weights"])
     scored["thesis"] = scored.apply(screener.thesis, axis=1)
     return scored
+
+
+def ideas():
+    try:
+        return _ideas()
+    except RuntimeError:
+        st.warning("Yahoo Finance is rate-limiting this server and today's data snapshot isn't available yet, "
+                   "so the idea screen can't be built right now. Please try again in a few minutes.", icon="⏳")
+        return None
 
 
 def ideas_page():
@@ -595,6 +614,8 @@ def ideas_page():
     st.caption("Multi-factor screen (growth, quality, valuation, momentum) over a curated universe of large Indian and US "
                "companies, ranked within each market. Edit the universe in config.json.")
     df = ideas()
+    if df is None:
+        return
     n = st.slider("Ideas per market", 3, 15, CFG["screener"]["top_n_per_market"])
     for mkt, label in (("IN", "🇮🇳 India"), ("US", "🇺🇸 US")):
         g = df[df["market"] == mkt].head(n)

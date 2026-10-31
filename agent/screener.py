@@ -14,7 +14,7 @@ FIELDS = ["shortName", "sector", "currency", "marketCap", "revenueGrowth", "earn
 def fetch_infos(symbols, workers: int = 4) -> pd.DataFrame:
     symbols = list(dict.fromkeys(symbols))
     with ThreadPoolExecutor(workers) as ex:
-        infos = list(ex.map(data.info, symbols))
+        infos = list(ex.map(lambda s: data.info(s, quick=True), symbols))
     rows = []
     for s, inf in zip(symbols, infos):
         if not inf or inf.get("_partial"):

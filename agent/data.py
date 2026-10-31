@@ -43,7 +43,7 @@ def _use_snapshot() -> bool:
 
 def snapshot() -> dict:
     """{symbol: {"t": epoch, "info": {...}, "st": {kind: {index, columns, data}}}} - reloaded every 3 hours."""
-    if time.time() - _SNAP["t"] > 3 * 3600:
+    if time.time() - _SNAP["t"] > (3 * 3600 if _SNAP["d"] else 300):  # no snapshot yet: look again in 5 min
         raw = None
         try:
             if SNAPSHOT_FILE and SNAPSHOT_FILE.exists():
@@ -103,9 +103,9 @@ def _ttl(d: dict) -> int:
     return PARTIAL_TTL if d.get("_partial") else SEC_TTL if d.get("_source") == "SEC EDGAR" else GOOD_TTL
 
 
-def info_live(symbol: str):
+def info_live(symbol: str, retries: bool = True):
     """Yahoo profile with retries/backoff, or None if Yahoo refuses."""
-    for wait in (0, 1.5, 4):
+    for wait in ((0, 1.5, 4) if retries else (0,)):
         time.sleep(wait)
         try:
             d = _ticker(symbol).get_info()
@@ -116,14 +116,20 @@ def info_live(symbol: str):
     return None
 
 
-def info(symbol: str) -> dict:
+def info(symbol: str, quick: bool = False) -> dict:
     """Profile from: memory cache -> daily snapshot -> live Yahoo -> SEC EDGAR (US) -> basic price data.
-    Failures are never cached for long, so a temporary Yahoo block heals itself."""
+    Failures are never cached for long, so a temporary Yahoo block heals itself.
+    quick=True (bulk screening): one Yahoo attempt, no fallbacks; returns {} on failure and caches nothing."""
     hit = _INFO.get(symbol)
     if hit and time.time() - hit[0] < _ttl(hit[1]):
         return hit[1]
     e = _snap(symbol)
-    d = dict(e["info"]) if e and _info_ok(e.get("info")) else info_live(symbol)
+    d = dict(e["info"]) if e and _info_ok(e.get("info")) else info_live(symbol, retries=not quick)
+    if quick:
+        if d:
+            with _INFO_LOCK:
+                _INFO[symbol] = (time.time(), d)
+        return d or {}
     if not d and market_of(symbol) == "US":
         fi = _fast_info(symbol)
         try:
