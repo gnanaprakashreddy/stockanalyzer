@@ -56,7 +56,11 @@ def wacc(symbol: str, inf: dict, mkt: dict, beta: float) -> dict:
     else:
         we, wd = mcap / (mcap + debt_trade), debt_trade / (mcap + debt_trade)
     w = we * ke + wd * kd * (1 - tax)
-    return {"wacc": w, "cost_of_equity": ke, "cost_of_debt": kd, "tax": tax, "equity_weight": we}
+    b_used = min(max(beta if np.isfinite(beta) else 1.0, 0.5), 2.5)
+    return {"wacc": w, "cost_of_equity": ke, "cost_of_debt": kd, "tax": tax, "equity_weight": we, "debt_weight": wd,
+            "beta": beta, "beta_used": b_used, "rf": mkt["risk_free_rate"], "erp": mkt["equity_risk_premium"],
+            "mcap": mcap, "debt": debt, "debt_trade": debt_trade, "interest": interest,
+            "kd_from_interest": bool(debt > 0 and np.isfinite(interest))}
 
 
 # ---------------------------------------------------------------- DCF
@@ -98,13 +102,14 @@ def dcf(symbol: str, inf: dict, mkt: dict, cfg: dict, beta: float) -> dict:
         out["note"] = "Negative free cash flow - DCF not meaningful"
         return out
 
-    candidates = [_num(inf.get("earningsGrowth")), _num(inf.get("revenueGrowth"))]
+    g_inputs = [("Earnings growth (latest, YoY)", _num(inf.get("earningsGrowth"))),
+                ("Revenue growth (latest, YoY)", _num(inf.get("revenueGrowth")))]
     if len(fcf_hist) >= 3 and fcf_hist.iloc[-1] > 0:
         n = len(fcf_hist) - 1
-        candidates.append((fcf_hist.iloc[0] / fcf_hist.iloc[-1]) ** (1 / n) - 1)
-    candidates = [c for c in candidates if np.isfinite(c)]
-    g0 = float(np.median(candidates)) if candidates else mkt["terminal_growth"]
-    g0 = min(max(g0, cfg["min_initial_growth"]), cfg["max_initial_growth"])
+        g_inputs.append((f"Free cash flow CAGR ({n} years)", (fcf_hist.iloc[0] / fcf_hist.iloc[-1]) ** (1 / n) - 1))
+    candidates = [c for _, c in g_inputs if np.isfinite(c)]
+    g_raw = float(np.median(candidates)) if candidates else mkt["terminal_growth"]
+    g0 = min(max(g_raw, cfg["min_initial_growth"]), cfg["max_initial_growth"])
 
     w = wacc(symbol, inf, mkt, beta)
     r = max(w["wacc"], mkt["terminal_growth"] + 0.02)
@@ -121,6 +126,9 @@ def dcf(symbol: str, inf: dict, mkt: dict, cfg: dict, beta: float) -> dict:
         value=res["value"], wacc=r, growth=g0, terminal_growth=gt, base_fcf=base,
         cash=cash, debt=debt, shares=shares, fx=_fin_to_trade_fx(inf), projections=res["projections"], wacc_detail=w,
         years=cfg["projection_years"], high_years=cfg["high_growth_years"],
+        fcf_hist={(c.year if hasattr(c, "year") else str(c)): float(v) for c, v in fcf_hist.items()},
+        growth_inputs=g_inputs, growth_raw=g_raw, growth_cap=(cfg["min_initial_growth"], cfg["max_initial_growth"]),
+        wacc_floored=bool(w["wacc"] < r), pv_fcf=res["pv_fcf"], pv_tv=pv_tv, ev=ev, equity=res["equity"],
         tv_share=pv_tv / ev if ev else np.nan,
         note=f"WACC {r:.1%}, g {g0:.1%}->{gt:.1%}, TV {pv_tv / ev:.0%} of EV",
     )
@@ -147,7 +155,8 @@ def ddm(inf: dict, mkt: dict, beta: float) -> dict:
     roe, payout = _num(inf.get("returnOnEquity")), _num(inf.get("payoutRatio"))
     g = roe * (1 - payout) if np.isfinite(roe) and np.isfinite(payout) and 0 <= payout <= 1 else mkt["terminal_growth"]
     g = min(max(g, 0.0), ke - 0.02, mkt["terminal_growth"] + 0.03)
-    return {"value": d0 * (1 + g) / (ke - g), "note": f"ke {ke:.1%}, g {g:.1%}"}
+    return {"value": d0 * (1 + g) / (ke - g), "note": f"ke {ke:.1%}, g {g:.1%}", "d0": d0, "ke": ke, "g": g,
+            "roe": roe, "payout": payout}
 
 
 # ---------------------------------------------------------------- Graham / Relative
@@ -170,15 +179,17 @@ def relative_value(inf: dict, sector_medians: dict, market: str) -> dict:
     if inf.get("sector") in FINANCIAL_SECTORS and np.isfinite(bv) and bv > 0 and np.isfinite(med.get("priceToBook", np.nan)):
         vals.append(bv * med["priceToBook"])
         notes.append(f"sector P/B {med['priceToBook']:.1f}")
-    return {"value": float(np.mean(vals)) if vals else np.nan, "note": ", ".join(notes)}
+    return {"value": float(np.mean(vals)) if vals else np.nan, "note": ", ".join(notes), "eps": eps, "bv": bv,
+            "sector_pe": med.get("forwardPE", np.nan), "sector_pb": med.get("priceToBook", np.nan),
+            "parts": vals}
 
 
 # ---------------------------------------------------------------- Quality scores
-def piotroski_detail(symbol: str) -> list:
-    """Piotroski F-score tests as (name, passed or None if data missing)."""
+def piotroski_explained(symbol: str) -> list:
+    """Piotroski F-score tests as (name, passed or None if data missing, explanation with the actual numbers)."""
     fin, bs, cf = (data.statement(symbol, k) for k in ("financials", "balance_sheet", "cashflow"))
     f = lambda df, n, i=0: data.first(df, *n, idx=i)
-    ni0, ni1 = f(fin, ["Net Income"]), f(fin, ["Net Income"], 1)
+    ni0 = f(fin, ["Net Income"])
     ta0, ta1 = f(bs, ["Total Assets"]), f(bs, ["Total Assets"], 1)
     cfo = f(cf, ["Operating Cash Flow"])
     ltd0, ltd1 = f(bs, ["Long Term Debt"]), f(bs, ["Long Term Debt"], 1)
@@ -187,19 +198,30 @@ def piotroski_detail(symbol: str) -> list:
     sh0, sh1 = f(bs, ["Ordinary Shares Number", "Share Issued"]), f(bs, ["Ordinary Shares Number", "Share Issued"], 1)
     gp0, gp1 = f(fin, ["Gross Profit"]), f(fin, ["Gross Profit"], 1)
     rv0, rv1 = f(fin, ["Total Revenue"]), f(fin, ["Total Revenue"], 1)
+    d = lambda a, b: a / b if np.isfinite(a) and np.isfinite(b) and b else np.nan
+    p = lambda v, fmt="{:.1%}": fmt.format(v) if np.isfinite(v) else "n/a"
     tests = [
-        (ni0 > 0, [ni0]),
-        (ni0 / ta0 > 0, [ni0, ta0]),
-        (cfo > 0, [cfo]),
-        (cfo > ni0, [cfo, ni0]),
-        ((ltd0 / ta0) <= (ltd1 / ta1), [ltd0, ta0, ltd1, ta1]),
-        ((ca0 / cl0) > (ca1 / cl1), [ca0, cl0, ca1, cl1]),
-        (sh0 <= sh1, [sh0, sh1]),
-        ((gp0 / rv0) > (gp1 / rv1), [gp0, rv0, gp1, rv1]),
-        ((rv0 / ta0) > (rv1 / ta1), [rv0, ta0, rv1, ta1]),
+        ("Positive net income", ni0 > 0, [ni0], f"Net income {p(ni0, '{:,.0f}')} > 0"),
+        ("Positive return on assets", d(ni0, ta0) > 0, [ni0, ta0], f"ROA = net income / total assets = {p(d(ni0, ta0))} > 0"),
+        ("Positive operating cash flow", cfo > 0, [cfo], f"Operating cash flow {p(cfo, '{:,.0f}')} > 0"),
+        ("Cash flow > net income (earnings quality)", cfo > ni0, [cfo, ni0],
+         f"OCF {p(cfo, '{:,.0f}')} vs net income {p(ni0, '{:,.0f}')}"),
+        ("Lower long-term debt / assets", d(ltd0, ta0) <= d(ltd1, ta1), [ltd0, ta0, ltd1, ta1],
+         f"LT debt/assets this year {p(d(ltd0, ta0))} vs last year {p(d(ltd1, ta1))}"),
+        ("Higher current ratio", d(ca0, cl0) > d(ca1, cl1), [ca0, cl0, ca1, cl1],
+         f"Current ratio this year {p(d(ca0, cl0), '{:.2f}')} vs last year {p(d(ca1, cl1), '{:.2f}')}"),
+        ("No new shares issued", sh0 <= sh1, [sh0, sh1], f"Shares this year {p(sh0, '{:,.0f}')} vs last year {p(sh1, '{:,.0f}')}"),
+        ("Higher gross margin", d(gp0, rv0) > d(gp1, rv1), [gp0, rv0, gp1, rv1],
+         f"Gross margin this year {p(d(gp0, rv0))} vs last year {p(d(gp1, rv1))}"),
+        ("Higher asset turnover", d(rv0, ta0) > d(rv1, ta1), [rv0, ta0, rv1, ta1],
+         f"Revenue / assets this year {p(d(rv0, ta0), '{:.2f}')} vs last year {p(d(rv1, ta1), '{:.2f}')}"),
     ]
-    names = ['Positive net income', 'Positive return on assets', 'Positive operating cash flow', 'Cash flow > net income (earnings quality)', 'Lower long-term debt / assets', 'Higher current ratio', 'No new shares issued', 'Higher gross margin', 'Higher asset turnover']
-    return [(n, bool(ok) if all(np.isfinite(v) for v in vals) else None) for n, (ok, vals) in zip(names, tests)]
+    return [(n, bool(ok) if all(np.isfinite(v) for v in vals) else None, txt) for n, ok, vals, txt in tests]
+
+
+def piotroski_detail(symbol: str) -> list:
+    """Piotroski F-score tests as (name, passed or None if data missing)."""
+    return [(n, ok) for n, ok, _ in piotroski_explained(symbol)]
 
 
 def piotroski(symbol: str) -> tuple:
@@ -208,9 +230,10 @@ def piotroski(symbol: str) -> tuple:
     return sum(valid), len(valid)
 
 
-def altman_z(symbol: str, inf: dict) -> float:
+def altman_components(symbol: str, inf: dict) -> dict:
+    """Altman Z-score inputs, weighted terms and total (empty dict if not applicable)."""
     if inf.get("sector") in FINANCIAL_SECTORS:
-        return np.nan
+        return {}
     fin, bs = data.statement(symbol, "financials"), data.statement(symbol, "balance_sheet")
     ta = data.first(bs, "Total Assets")
     tl = data.first(bs, "Total Liabilities Net Minority Interest")
@@ -220,9 +243,20 @@ def altman_z(symbol: str, inf: dict) -> float:
     sales = data.first(fin, "Total Revenue")
     mcap = _num(inf.get("marketCap")) / _fin_to_trade_fx(inf)
     if not all(np.isfinite(v) for v in (ta, tl, wc, ebit, sales, mcap)) or ta <= 0 or tl <= 0:
-        return np.nan
+        return {}
     re = re if np.isfinite(re) else 0.0
-    return 1.2 * wc / ta + 1.4 * re / ta + 3.3 * ebit / ta + 0.6 * mcap / tl + 1.0 * sales / ta
+    terms = [("Working capital / total assets", 1.2, wc / ta, "liquidity"),
+             ("Retained earnings / total assets", 1.4, re / ta, "accumulated profitability"),
+             ("EBIT / total assets", 3.3, ebit / ta, "operating efficiency"),
+             ("Market cap / total liabilities", 0.6, mcap / tl, "cushion before liabilities exceed equity value"),
+             ("Sales / total assets", 1.0, sales / ta, "asset turnover")]
+    return {"terms": terms, "z": sum(w * x for _, w, x, _ in terms),
+            "inputs": {"Total assets": ta, "Total liabilities": tl, "Working capital": wc, "Retained earnings": re,
+                       "EBIT": ebit, "Sales": sales, "Market cap (reporting ccy)": mcap}}
+
+
+def altman_z(symbol: str, inf: dict) -> float:
+    return altman_components(symbol, inf).get("z", np.nan)
 
 
 # ---------------------------------------------------------------- Blend

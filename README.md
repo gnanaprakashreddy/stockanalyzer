@@ -23,6 +23,7 @@ Run locally: `.\.venv\Scripts\python.exe -m streamlit run app.py`, then open htt
 | 🔍 **Stock Analysis** | Search by company name or ticker. Shows the analyst rating, blended fair value and reasons, plus these tabs: **Overview** (key multiples, 5y price with 50/200-DMA), **Valuation** (every model plus an interactive DCF with sliders), **Annual Reports** (income statement, balance sheet and cash flow, annual or quarterly; 13 derived ratios by year; an auto-written analyst read; links to full annual reports on Screener.in/NSE/BSE or SEC EDGAR), **Fundamentals & Quality** (Piotroski breakdown, Altman Z), **Technicals** (RSI, MACD, returns), **Risk** (vs benchmark, drawdown), **Company** profile |
 | 💼 **My Portfolio** | Holdings with live value in INR, P&L, today's change, weights, fair value and rating. Sector/market/broker allocation, portfolio risk and risk contribution. Edit, upload or download the CSV in the browser. One click generates the full analyst report. |
 | 💡 **New Ideas** | Top stocks per market from the multi-factor screen, each with a short thesis |
+| 📚 **Learn** | 10 lessons on reading financial statements like a pro, plus **Explain a stock**: every number on the analysis page (statements, ratios, DuPont, WACC/DCF, DDM, multiples, Graham, Piotroski, Altman, technicals, risk, rating) worked through step by step with the company's real figures |
 
 Holdings source, in priority order: edits or uploads made in the browser (current session only), then the `portfolio_csv` secret, then the local `portfolio.csv`.
 

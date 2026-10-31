@@ -5,33 +5,37 @@ import pandas as pd
 from . import data, risk, valuation
 
 
-def rate(upside, tech, f_score, f_n, z):
-    s, why = 0.0, []
+def rate_parts(upside, tech, f_score, f_n, z) -> list:
+    """Scoring components behind the rating as (factor, points, reason)."""
+    parts = []
     if np.isfinite(upside):
-        s += 2 if upside > 0.25 else 1 if upside > 0.10 else -2 if upside < -0.25 else -1 if upside < -0.10 else 0
+        pts = 2 if upside > 0.25 else 1 if upside > 0.10 else -2 if upside < -0.25 else -1 if upside < -0.10 else 0
         label = "undervalued" if upside > 0.1 else "overvalued" if upside < -0.1 else "fairly valued"
-        why.append(f"{label} ({upside:+.1%} to blended fair value)")
+        parts.append(("Valuation", pts, f"{label} ({upside:+.1%} to blended fair value)"))
     if tech:
-        s += {"Uptrend": 1, "Downtrend": -1}.get(tech["trend"], 0)
-        why.append(f"{tech['trend'].lower()}, RSI {tech['rsi14']:.0f}")
+        parts.append(("Trend", {"Uptrend": 1, "Downtrend": -1}.get(tech["trend"], 0), f"{tech['trend'].lower()}, RSI {tech['rsi14']:.0f}"))
         if tech["rsi14"] > 75:
-            s -= 0.5
-            why.append("overbought - avoid chasing")
+            parts.append(("RSI", -0.5, "overbought - avoid chasing"))
         elif tech["rsi14"] < 30:
-            s += 0.5
-            why.append("oversold - potential entry")
+            parts.append(("RSI", 0.5, "oversold - potential entry"))
     if f_n >= 6:
         if f_score / f_n >= 0.75:
-            s += 1
-            why.append(f"strong fundamentals (Piotroski {f_score}/{f_n})")
+            parts.append(("Fundamentals", 1, f"strong fundamentals (Piotroski {f_score}/{f_n})"))
         elif f_score / f_n <= 0.35:
-            s -= 1
-            why.append(f"weak fundamentals (Piotroski {f_score}/{f_n})")
+            parts.append(("Fundamentals", -1, f"weak fundamentals (Piotroski {f_score}/{f_n})"))
     if np.isfinite(z) and z < 1.81:
-        s -= 1
-        why.append(f"Altman Z {z:.2f} in distress zone")
-    r = "Strong Buy" if s >= 3 else "Buy / Accumulate" if s >= 1.5 else "Hold" if s >= -1 else "Reduce" if s > -2.5 else "Sell"
-    return r, s, "; ".join(why)
+        parts.append(("Distress risk", -1, f"Altman Z {z:.2f} in distress zone"))
+    return parts
+
+
+def rating_of(s: float) -> str:
+    return "Strong Buy" if s >= 3 else "Buy / Accumulate" if s >= 1.5 else "Hold" if s >= -1 else "Reduce" if s > -2.5 else "Sell"
+
+
+def rate(upside, tech, f_score, f_n, z):
+    parts = rate_parts(upside, tech, f_score, f_n, z)
+    s = float(sum(p for _, p, _ in parts))
+    return rating_of(s), s, "; ".join(r for _, _, r in parts)
 
 
 def analyse(symbol: str, cfg: dict, sector_medians: dict, close: pd.Series, bench_close: pd.Series) -> dict:

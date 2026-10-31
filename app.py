@@ -11,7 +11,7 @@ import pandas as pd
 import streamlit as st
 import yfinance as yf
 
-from agent import data, financials, risk, screener, stock, valuation
+from agent import data, explain, financials, lessons, risk, screener, stock, valuation
 
 ROOT = Path(__file__).parent
 CFG = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
@@ -149,21 +149,25 @@ RATING_COLOR = {"Strong Buy": "green", "Buy / Accumulate": "green", "Hold": "ora
 
 
 # ------------------------------------------------------------------ stock page
+def pick_symbol(key: str):
+    """Search box + match picker. Returns the chosen ticker or None."""
+    q = st.text_input("Search", key=key, placeholder="Company name or ticker ...", label_visibility="collapsed")
+    if not q:
+        return None
+    hits = search(q.strip())
+    if hits:
+        labels = [f"{n}  ·  {s}  ·  {e}" for s, n, e in hits]
+        pick = st.selectbox("Matches", labels, index=0, key=f"{key}_pick_{q.strip().lower()}")
+        return hits[labels.index(pick)][0]
+    symbol = q.strip().upper()
+    st.info(f"No search matches - trying ticker **{symbol}** directly (Indian stocks need .NS or .BO, e.g. RELIANCE.NS).")
+    return symbol
+
+
 def stock_page():
     st.title("🔍 Stock Analysis")
     st.caption("Search any NSE/BSE or US-listed company by name or ticker (e.g. *Reliance*, *TCS*, *Apple*, *NVDA*).")
-    q = st.text_input("Search", key="query", placeholder="Company name or ticker ...", label_visibility="collapsed")
-    symbol = None
-    if q:
-        hits = search(q.strip())
-        if hits:
-            labels = [f"{n}  ·  {s}  ·  {e}" for s, n, e in hits]
-            pick = st.selectbox("Matches", labels, index=0, key=f"pick_{q.strip().lower()}")
-            symbol = hits[labels.index(pick)][0]
-        else:
-            symbol = q.strip().upper()
-            st.info(f"No search matches - trying ticker **{symbol}** directly "
-                    "(Indian stocks need .NS or .BO, e.g. RELIANCE.NS).")
+    symbol = pick_symbol("query")
     if not symbol:
         st.markdown("#### What you get\n- **Analyst rating** with blended fair value (DCF, DDM, relative, Graham, consensus)\n"
                     "- **Annual reports**: income statement, balance sheet, cash flow, 10+ derived ratios and an analyst read\n"
@@ -187,6 +191,12 @@ def stock_page():
     c[3].metric("Piotroski F-score", f"{a['f_score']}/{a['f_n']}" if a["f_n"] else "–")
     c[4].metric("Street consensus", a["reco"].replace("_", " ").title() if a["reco"] and a["reco"] != "none" else "–")
     st.markdown(f"**Analyst view:** :{RATING_COLOR.get(a['rating'], 'gray')}[**{a['rating']}**] — {a['why'] or 'insufficient data'}")
+
+    def _to_learn():
+        st.session_state["learn_query"] = symbol
+        st.session_state["page"] = "📚 Learn"
+
+    st.button("📚 Explain how these numbers are calculated", on_click=_to_learn)
 
     tabs = st.tabs(["📊 Overview", "💰 Valuation", "📑 Annual Reports", "🏗 Fundamentals & Quality",
                     "📈 Technicals", "⚠ Risk", "🏢 Company"])
@@ -551,8 +561,51 @@ def ideas_page():
     st.caption("Screens are a starting point for research, not recommendations.")
 
 
+# ------------------------------------------------------------------ learn page
+def _render_blocks(blocks):
+    for kind, obj in blocks:
+        if kind == "md":
+            st.markdown(obj.replace("$", "\\$"))
+        elif kind == "table":
+            st.dataframe(obj, hide_index=isinstance(obj.index, pd.RangeIndex), width="stretch")
+
+
+def learn_page():
+    st.title("📚 Learn to Analyse Like a Pro")
+    t1, t2 = st.tabs(["🔬 Explain a stock, step by step", "📖 Lessons"])
+    with t2:
+        st.caption("Work through these in order - each builds on the previous one. Then use **Explain a stock** to see every concept applied to a real company.")
+        for i, (title, body) in enumerate(lessons.LESSONS):
+            with st.expander(title, expanded=(i == 0)):
+                st.markdown(body)
+    with t1:
+        st.caption("Pick any stock and see exactly how every number on the Stock Analysis page is calculated - "
+                   "with the company's real figures plugged into each formula.")
+        symbol = pick_symbol("learn_query")
+        if not symbol:
+            st.markdown("Try **TCS**, **HDFC Bank** (a bank - see how the method changes), **Apple** or **NVIDIA**.")
+            return
+        with st.spinner(f"Working through {symbol} ..."):
+            a = analyse(symbol)
+            if not a:
+                st.error(f"No market data found for **{symbol}**.")
+                return
+            inf = info(symbol)
+            groups = explain.explain(symbol, a, inf, CFG, statements(symbol, False))
+        st.subheader(f"{a['name']} ({symbol})")
+        st.markdown(f"Price **{money(a['price'], a['ccy'])}** · Fair value **{money(a['fair'], a['ccy'])}** "
+                    f"({pct(a['upside'], True)}) · Rating **{a['rating']}**".replace("$", "\\$"))
+        tabs = st.tabs([g for g, _ in groups])
+        for tab, (_, sections) in zip(tabs, groups):
+            with tab:
+                for i, sec in enumerate(sections):
+                    with st.expander(sec["title"].replace("$", "\\$"), expanded=(i == 0)):
+                        _render_blocks(sec["blocks"])
+        st.caption("Figures from Yahoo Finance; statement amounts in the company's reporting currency. Educational use only.")
+
+
 # ------------------------------------------------------------------ navigation
-PAGES = {"🔍 Stock Analysis": stock_page, "💼 My Portfolio": portfolio_page, "💡 New Ideas": ideas_page}
+PAGES = {"🔍 Stock Analysis": stock_page, "💼 My Portfolio": portfolio_page, "💡 New Ideas": ideas_page, "📚 Learn": learn_page}
 with st.sidebar:
     st.markdown("## 📈 AI Portfolio Analyst")
     page = st.radio("Go to", list(PAGES), key="page", label_visibility="collapsed")
