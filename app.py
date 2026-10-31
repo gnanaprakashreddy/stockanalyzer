@@ -87,8 +87,11 @@ def price_history(symbols: tuple, period: str = "5y") -> pd.DataFrame:
     return data.prices(list(symbols), period=period)
 
 
+MODEL_VERSION = 2  # bump whenever agent/ models change shape, so cached results are recomputed
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
-def analyse(symbol: str) -> dict:
+def _analyse(symbol: str, version: int) -> dict:
     bench = CFG["markets"][data.market_of(symbol)]["benchmark"]
     px = price_history((symbol, bench), "2y")
     if symbol not in px.columns or px[symbol].dropna().empty:
@@ -99,6 +102,14 @@ def analyse(symbol: str) -> dict:
     if key not in med:
         med.update(screener.sector_medians(screener.fetch_infos([symbol])))
     return stock.analyse(symbol, CFG, med, px[symbol], px[bench])
+
+
+def analyse(symbol: str) -> dict:
+    a = _analyse(symbol, MODEL_VERSION)
+    if a and a.get("dcf") and "growth_cap" not in a["dcf"]:  # stale entry from older code
+        _analyse.clear()
+        a = _analyse(symbol, MODEL_VERSION)
+    return a
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
